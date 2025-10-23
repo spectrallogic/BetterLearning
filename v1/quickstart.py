@@ -19,7 +19,7 @@ print(f"✓ Using device: {DEVICE}\n")
 
 # Import LFFT
 try:
-    from keep.liquid_fractal_transformer import LFFT, UltraFastLFFT
+    from v1.liquid_fractal_transformer import LFFT, UltraFastLFFT
 
     print("✓ LFFT imported successfully\n")
 except ImportError as e:

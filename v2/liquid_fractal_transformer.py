@@ -324,7 +324,7 @@ class LFFT(nn.Module):
             # Wave interference
             x_waves = wave_layer(x_routed)
 
-            # Residual (keep some original signal)
+            # Residual (v1 some original signal)
             x = x + 0.5 * x_waves
 
         # 3. Output projection

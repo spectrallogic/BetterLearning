@@ -276,7 +276,7 @@ class NGramHybrid(nn.Module):
     🆕 INNOVATION 3: Explicit n-gram features + neural layer (OPTIMIZED)
 
     Instead of learning everything, explicitly encode n-gram statistics
-    as features. Uses hash embedding to keep parameters low.
+    as features. Uses hash embedding to v1 parameters low.
 
     Philosophy: Language has strong local structure (n-grams). Don't make
     the model learn what we already know - give it as features!
@@ -497,7 +497,7 @@ def generate_text(model, char_to_idx, idx_to_char, start_str="The ", length=200,
 
             generated += next_char
 
-            # Update context (keep last 64 chars)
+            # Update context (v1 last 64 chars)
             context = torch.cat([context, torch.tensor([[next_idx]], device=device)], dim=1)
             if context.size(1) > 64:
                 context = context[:, -64:]
@@ -624,7 +624,7 @@ def main():
     print("  - Speed comparable to baselines after optimization")
 
     print("\n• NGramHybrid: Explicit linguistic features help!")
-    print("  - Hash embeddings keep parameters low")
+    print("  - Hash embeddings v1 parameters low")
     print("  - Combines classic NLP with neural learning")
 
     print("\n• SwarmLM: Ensemble of specialists shows promise")
@@ -827,7 +827,7 @@ INSIGHTS & ANALYSIS
   - Speed comparable to baselines after optimization
 
 • NGramHybrid: Explicit linguistic features help!
-  - Hash embeddings keep parameters low
+  - Hash embeddings v1 parameters low
   - Combines classic NLP with neural learning
 
 • SwarmLM: Ensemble of specialists shows promise
