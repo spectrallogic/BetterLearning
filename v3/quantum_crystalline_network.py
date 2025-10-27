@@ -1,3 +1,4 @@
+
 # quantum_crystalline_network.py
 # ==============================================================================
 # QUANTUM CRYSTALLINE NEURAL NETWORK (QCNN)
@@ -487,7 +488,8 @@ class StandardMLP(nn.Module):
             nn.Linear(hidden_dim, output_dim, device=DEVICE),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, timestep: Optional[int] = None) -> torch.Tensor:
+        # Accept optional `timestep` for compatibility with training loop.
         return self.net(x)
 
 
