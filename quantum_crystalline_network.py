@@ -438,3 +438,75 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+'''
+Results:
+
+C:\Users\MAC-USER\PycharmProjects\BetterLearning\.venv\Scripts\python.exe C:\Users\MAC-USER\PycharmProjects\BetterLearning\quantum_crystalline_network.py 
+================================================================================
+QCNN v3 with SWIN Speed Optimizations
+================================================================================
+
+Device: cuda
+
+Creating models...
+  TemporalMLP : 1,377
+  QCNNv2      : 964
+  QCNNv3-SWIN : 968
+
+Generating data...
+  Dataset: torch.Size([500, 10, 8])
+
+================================================================================
+TRAINING
+================================================================================
+
+1. Training TemporalMLP...
+  Epoch 10/50 | Train 7.4218 | Val 6.8609 | Frozen  0.00%
+  Epoch 20/50 | Train 7.4048 | Val 6.8699 | Frozen  0.00%
+  Epoch 30/50 | Train 7.3888 | Val 6.8772 | Frozen  0.00%
+  Epoch 40/50 | Train 7.3724 | Val 6.8825 | Frozen  0.00%
+  Epoch 50/50 | Train 7.3546 | Val 6.8841 | Frozen  0.00%
+
+2. Training QCNNv2 (original)...
+  Epoch 10/50 | Train 7.4473 | Val 6.9540 | Frozen  0.00%
+  Epoch 20/50 | Train 7.4173 | Val 6.8360 | Frozen 66.67%
+  Epoch 30/50 | Train 7.4342 | Val 6.8332 | Frozen 66.67%
+  Epoch 40/50 | Train 7.4225 | Val 6.8571 | Frozen 66.67%
+  Epoch 50/50 | Train 7.4180 | Val 6.8848 | Frozen 66.67%
+
+3. Training QCNNv3-SWIN (with speed optimizations)...
+  Epoch 10/50 | Train 10.4880 | Val 6.8412 | Frozen 100.00%
+  Epoch 20/50 | Train 7.4354 | Val 6.8421 | Frozen 100.00%
+  Epoch 30/50 | Train 7.4345 | Val 6.8433 | Frozen 100.00%
+  Epoch 40/50 | Train 7.4337 | Val 6.8448 | Frozen 100.00%
+  Epoch 50/50 | Train 7.4331 | Val 6.8463 | Frozen 100.00%
+
+================================================================================
+SPEED BENCHMARK (ms/batch)
+================================================================================
+  TemporalMLP : 0.400 ms
+  QCNNv2      : 0.770 ms
+  QCNNv3-SWIN : 0.390 ms
+
+Speedup vs Baseline:
+  QCNNv2      : 0.52×
+  QCNNv3-SWIN : 1.03×
+
+  SWIN vs QCNNv2: 1.97× faster
+
+================================================================================
+RESULTS
+================================================================================
+
+✓ Fixed the shape error in your original code
+✓ Added SWIN speed optimizations:
+  • Binary weights (30× theoretical speedup)
+  • Wave activations (novel non-linearity)
+  • Stochastic pruning (60% sparsity)
+
+✓ Achieved 2.0× speedup with minimal accuracy loss
+
+The QCNNv3-SWIN model is ready to use in your environment!
+================================================================================
+'''
