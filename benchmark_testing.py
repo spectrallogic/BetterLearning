@@ -1220,7 +1220,7 @@ class ComprehensiveBenchmark:
             num_updates = 500
             context_len = 64
         else:
-            num_updates = 2000
+            num_updates = 5000
             context_len = 128
 
         vocab_size = self.tokenizer.n_vocab
@@ -1383,7 +1383,7 @@ def main():
     parser.add_argument('--quick', action='store_true',
                        help='Quick test (500 updates, ~5 min)')
     parser.add_argument('--full', action='store_true',
-                       help='Full test (2000 updates, ~20 min)')
+                       help='Full test (5000 updates, ~20 min)')
     parser.add_argument('--versions', nargs='+',
                        help='Specific versions to test (e.g., v13 v14)')
     parser.add_argument('--no-baselines', action='store_true',
