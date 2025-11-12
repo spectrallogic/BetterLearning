@@ -11,14 +11,16 @@ Tests ORGANIC INTELLIGENCE capabilities:
 6. Adaptive learning behavior
 
 USAGE:
-python benchmark_v13.py --quick                    # Fast test, all models
-python benchmark_v13.py --full                     # Complete test, all models
-python benchmark_v13.py --versions v13 v14         # Test specific versions
-python benchmark_v13.py --versions v14 --no-baselines  # Only v14, skip baselines
-python benchmark_v13.py --list                     # List available versions
+python benchmark_testing.py --quick                    # Fast test, all models
+python benchmark_testing.py --full                     # Complete test, all models
+python benchmark_testing.py --versions v13 v14         # Test specific versions
+python benchmark_testing.py --versions v14 --no-baselines  # Only v14, skip baselines
+python benchmark_testing.py --list                     # List available versions
 """
 
 import torch
+import importlib.util
+import inspect
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
@@ -48,6 +50,16 @@ except ImportError:
     print("⚠️  sklearn not available - abstraction visualization disabled")
     HAS_SKLEARN = False
 
+def has_method(obj, method_name: str) -> bool:
+    """Check if object has a callable method"""
+    return hasattr(obj, method_name) and callable(getattr(obj, method_name))
+
+
+def safe_call(obj, method_name: str, *args, **kwargs):
+    """Call method if it exists, otherwise do nothing"""
+    if has_method(obj, method_name):
+        return getattr(obj, method_name)(*args, **kwargs)
+    return None
 
 # ============================================================================
 # BASELINE MODELS (For Comparison)
@@ -842,99 +854,106 @@ class BenchmarkVisualizer:
 
 
 # ============================================================================
-# VERSION LOADER
+# VERSION LOADER (SIMPLE)
 # ============================================================================
 
 class VersionLoader:
     """Load different ExpandFormer versions dynamically"""
 
-    AVAILABLE_VERSIONS = {
-        'v13': {
-            'module': 'expandformer_v13',
-            'class': 'OrganicGrowthTransformer',
-            'description': 'Organic Growth with Subconscious Planning',
-            'config': {
-                'base_dim': 64,
-                'hidden_dim': 128,
-                'num_blocks': 2,
-                'num_heads': 2,
-                'max_domains': 20
-            }
-        },
-        'v14': {
-            'module': 'expandformer_v14',
-            'class': 'MicroscopicGrowthTransformer',
-            'description': 'Microscopic Start (Tiny → Grows)',
-            'config': {
-                'base_dim': 8,
-                'hidden_dim': 16,
-                'num_heads': 1,
-                'max_domains': 30,
-                'max_blocks': 10
-            }
-        },
-        'v12': {
-            'module': 'expandformer_v12',
-            'class': 'ExpandFormer',
-            'description': 'Forced Abstraction (16→32 dims)',
-            'config': {
-                'base_dim': 16,
-                'hidden_dim': 32,
-                'num_blocks': 2,
-                'num_heads': 1
-            }
-        }
-    }
+    @classmethod
+    def discover_versions(cls):
+        """
+        Find all expandformer_v*.py files
+        """
+        current_dir = Path.cwd()
+        expandformer_files = list(current_dir.glob("expandformer_v*.py"))
+
+        if not expandformer_files:
+            print("⚠️  No expandformer_v*.py files found")
+            return []
+
+        versions = []
+        for file_path in sorted(expandformer_files):
+            version = file_path.stem.replace('expandformer_', '')
+            if version.startswith('v'):
+                versions.append(version)
+
+        if versions:
+            print(f"🔍 Found versions: {', '.join(sorted(versions))}")
+
+        return sorted(versions)
 
     @classmethod
     def list_versions(cls):
         """Print available versions"""
+        versions = cls.discover_versions()
+
+        if not versions:
+            print("\n⚠️  No versions available")
+            return
+
         print("\n" + "=" * 70)
         print("AVAILABLE EXPANDFORMER VERSIONS")
         print("=" * 70)
-        for version, info in cls.AVAILABLE_VERSIONS.items():
-            print(f"\n{version}: {info['description']}")
-            print(f"  Module: {info['module']}.py")
-            print(f"  Class: {info['class']}")
-            print(f"  Config: {info['config']}")
-        print("\n" + "=" * 70 + "\n")
+        for version in versions:
+            print(f"  • {version}: expandformer_{version}.py")
+        print("=" * 70 + "\n")
 
     @classmethod
     def load_version(cls, version, vocab_size, context_len):
         """
-        Load a specific version
+        Load a specific version using simple convention:
+        - Import expandformer_{version}
+        - Get the 'ExpandFormer' export
+
         Returns: (model, version_name) or (None, None) if failed
         """
-        if version not in cls.AVAILABLE_VERSIONS:
-            print(f"⚠️  Unknown version: {version}")
-            print(f"Available versions: {list(cls.AVAILABLE_VERSIONS.keys())}")
-            return None, None
-
-        info = cls.AVAILABLE_VERSIONS[version]
+        module_name = f"expandformer_{version}"
 
         try:
-            # Try to import the module
+            # Import the module
             sys.path.insert(0, str(Path.cwd()))
-            module = __import__(info['module'])
-            model_class = getattr(module, info['class'])
+            module = __import__(module_name)
 
-            # Create model with config
-            config = info['config'].copy()
-            config['vocab_size'] = vocab_size
-            config['context_len'] = context_len
+            # Get standard export
+            if not hasattr(module, 'ExpandFormer'):
+                print(f"\n⚠️  {module_name} missing 'ExpandFormer' export")
+                print(f"   Add to end of file: ExpandFormer = YourMainClassName")
+                return None, None
 
-            model = model_class(**config)
+            model_class = module.ExpandFormer
 
-            print(f"✓ Loaded {version}: {info['description']}")
+            # Create model (pass only what it needs)
+            try:
+                model = model_class(vocab_size=vocab_size, context_len=context_len)
+            except TypeError as e:
+                # Try without context_len (some models might not need it)
+                try:
+                    model = model_class(vocab_size=vocab_size)
+                except:
+                    raise e  # Re-raise original error
+
+            # Log basic info
+            total_params = sum(p.numel() for p in model.parameters())
+            print(f"\n✓ Loaded {version}: {model_class.__name__}")
+            print(f"   Params: {total_params:,}")
+
+            # Check optional capabilities
+            if has_method(model, 'check_and_grow'):
+                print(f"   ✓ Growth capable")
+            if has_method(model, 'update_tracking'):
+                print(f"   ✓ Tracking enabled")
 
             return model, version
 
         except ImportError as e:
-            print(f"\n⚠️  Could not import {version}: {e}")
-            print(f"Make sure {info['module']}.py exists in current directory")
+            print(f"\n⚠️  Could not import {module_name}: {e}")
+            print(f"   Make sure expandformer_{version}.py exists")
             return None, None
         except Exception as e:
             print(f"\n⚠️  Error creating {version}: {e}")
+            import traceback
+            traceback.print_exc()
             return None, None
 
 
@@ -1052,17 +1071,13 @@ class ComprehensiveBenchmark:
                     recent_losses.append(loss.item())
                     update_count += 1
 
-                    # Update tracking for growth models
-                    if hasattr(model, 'update_tracking'):
-                        model.update_tracking(loss.item(), y_token)
-                    elif hasattr(model, 'embeddings') and hasattr(model.embeddings, 'update_difficulty'):
-                        model.embeddings.update_difficulty(y_token, loss.item())
-                    elif hasattr(model, 'embed') and hasattr(model.embed, 'update_difficulty'):
-                        model.embed.update_difficulty(y_token, loss.item())
+                    # NEW:
+                    safe_call(model, 'update_tracking', loss.item(), y_token)
 
                     # Check for growth
-                    if hasattr(model, 'check_and_grow') and update_count % 50 == 0:
-                        if model.check_and_grow():
+                    if update_count % 50 == 0:
+                        grew = safe_call(model, 'check_and_grow')
+                        if grew:
                             new_params = sum(p.numel() for p in model.parameters())
                             metrics.growth_events.append({
                                 'update': update_count,
@@ -1271,7 +1286,7 @@ class ComprehensiveBenchmark:
 
         # Load and test requested versions
         if not versions:
-            versions = ['v13', 'v14']  # Default versions
+            versions = ['v13', 'v14', 'v15']  # Default versions
 
         for version in versions:
             print("\n" + "=" * 70)
@@ -1358,10 +1373,6 @@ class ComprehensiveBenchmark:
         print(f"📁 Results saved to: {self.visualizer.save_dir}")
 
 
-# ============================================================================
-# MAIN
-# ============================================================================
-
 def main():
     parser = argparse.ArgumentParser(
         description='ExpandFormer Comprehensive Benchmark Suite',
@@ -1381,6 +1392,11 @@ def main():
                        help='List available versions and exit')
 
     args = parser.parse_args()
+
+    # Auto-discover versions at startup
+    print("=" * 70)
+    print("🔬 EXPANDFORMER COMPREHENSIVE BENCHMARK")
+    print("=" * 70)
 
     # List versions if requested
     if args.list:

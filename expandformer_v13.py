@@ -475,6 +475,8 @@ class OrganicGrowthTransformer(nn.Module):
 
         return False
 
+ExpandFormer = OrganicGrowthTransformer
+
 
 # ============================================================================
 # ORGANIC LEARNER
