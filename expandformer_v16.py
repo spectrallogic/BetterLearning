@@ -165,8 +165,8 @@ class MemorySystem(nn.Module):
 
         # Get top-k relevant
         top_indices = sorted(range(len(similarities)),
-                             key=lambda i: similarities[i],
-                             reverse=True)[:k]
+                           key=lambda i: similarities[i],
+                           reverse=True)[:k]
 
         # Reconstruct from best match
         if top_indices:
@@ -200,7 +200,6 @@ class MemorySystem(nn.Module):
         Remove least valuable memories when at capacity
         Value = importance * access_count / recency
         """
-
         def memory_value(mem):
             recency_penalty = (self.current_step - mem.recency + 1)
             return (mem.emotional_valence * (mem.access_count + 1)) / recency_penalty
@@ -449,7 +448,6 @@ class MultiSpeedGradient(nn.Module):
 
 class SeaOfNoise(nn.Module):
     """Layer 0: All concepts in probabilistic activation"""
-
     def __init__(self, hidden_dim, noise_dim=512):
         super().__init__()
         self.noise_dim = noise_dim
@@ -466,17 +464,16 @@ class SeaOfNoise(nn.Module):
 
 class PeakDetector(nn.Module):
     """Layer 1: Select relevant concepts + exploration"""
-
     def __init__(self, noise_dim, num_peaks=10, exploration_rate=0.2):
         super().__init__()
         self.num_peaks = num_peaks
         self.exploration_rate = exploration_rate
-        self.selector = nn.Linear(noise_dim, 1)
+        self.selector = nn.Linear(noise_dim, noise_dim)
 
     def forward(self, field, training=True):
         """field: [batch, noise_dim]"""
         # Score each dimension
-        scores = self.selector(field.unsqueeze(-1)).squeeze(-1)  # [batch, noise_dim]
+        scores = self.selector(field)  # [batch, noise_dim]
 
         # Select peaks (80%) + random dips (20%)
         batch_size = field.size(0)
@@ -507,7 +504,6 @@ class PeakDetector(nn.Module):
 
 class FutureGenerators(nn.Module):
     """Layer 2: Generate multiple possible futures"""
-
     def __init__(self, noise_dim, hidden_dim, num_generators=5):
         super().__init__()
         self.num_generators = num_generators
@@ -538,7 +534,6 @@ class FutureGenerators(nn.Module):
 
 class ScenarioEvaluator(nn.Module):
     """Layer 3: Evaluate and select best futures"""
-
     def __init__(self, hidden_dim):
         super().__init__()
         self.evaluator = nn.Sequential(
@@ -562,7 +557,6 @@ class ScenarioEvaluator(nn.Module):
 
 class InfluenceGenerator(nn.Module):
     """Layer 4: Convert best future to influence vector"""
-
     def __init__(self, hidden_dim):
         super().__init__()
         self.influence_net = nn.Sequential(
@@ -579,7 +573,6 @@ class InfluenceGenerator(nn.Module):
 
 class SubconsciousPlanning(nn.Module):
     """Complete 4-layer subconscious system"""
-
     def __init__(self, hidden_dim, noise_dim=512):
         super().__init__()
 
@@ -737,7 +730,7 @@ class DomainEmbedding(nn.Module):
 
                         for domain_idx in relevant_domains:
                             if domain_idx < len(self.domains):
-                                base_vec = h[b:b + 1, s:s + 1, :]
+                                base_vec = h[b:b+1, s:s+1, :]
                                 correction = self.domains[domain_idx](base_vec)
                                 corrections[b, s, :] = corrections[b, s, :] + correction.squeeze() * 0.1
 
@@ -798,7 +791,7 @@ class ExpandFormerV16(nn.Module):
 
         # Position encoding
         self.register_buffer('pos_encoding',
-                             self._create_pos_encoding(context_len, hidden_dim))
+                           self._create_pos_encoding(context_len, hidden_dim))
 
         # Transformer blocks
         self.blocks = nn.ModuleList([
@@ -1092,10 +1085,10 @@ class RealtimeLearner:
                     print(f"Step {self.model.total_updates:5d} | "
                           f"Loss: {avg_loss:.4f} | "
                           f"Domains: {self.model.domains_created} | "
-                          f"Efficiency: {efficiency * 100:.1f}%")
+                          f"Efficiency: {efficiency*100:.1f}%")
 
             avg_epoch_loss = np.mean(losses[-len(texts):])
-            print(f"\n✓ Epoch {epoch + 1} complete: {avg_epoch_loss:.4f}")
+            print(f"\n✓ Epoch {epoch+1} complete: {avg_epoch_loss:.4f}")
 
         # Final summary
         print("\n" + "=" * 70)
@@ -1105,7 +1098,7 @@ class RealtimeLearner:
         print(f"Domains created: {self.model.domains_created}")
         print(f"Final params: {sum(p.numel() for p in self.model.parameters()):,}")
         if len(self.model.selective_efficiency) > 0:
-            print(f"Avg efficiency: {np.mean(list(self.model.selective_efficiency)) * 100:.1f}%")
+            print(f"Avg efficiency: {np.mean(list(self.model.selective_efficiency))*100:.1f}%")
         print("=" * 70)
         print()
 
@@ -1168,7 +1161,7 @@ def main():
                     lines = [line.strip() for line in content.split('\n') if line.strip()]
 
                     for i in range(0, len(lines), 6):
-                        chunk = '\n'.join(lines[i:i + 6])
+                        chunk = '\n'.join(lines[i:i+6])
                         if len(chunk) > 10:
                             texts.append(chunk)
 
@@ -1179,11 +1172,11 @@ def main():
     if not texts:
         print("⚠️  No training data, using demo...")
         texts = [
-                    "Hello, how are you today?",
-                    "The weather is nice and sunny.",
-                    "I enjoy learning new things.",
-                    "Science and technology are fascinating.",
-                ] * 10
+            "Hello, how are you today?",
+            "The weather is nice and sunny.",
+            "I enjoy learning new things.",
+            "Science and technology are fascinating.",
+        ] * 10
 
     print(f"\n✓ Loaded {len(texts)} text chunks\n")
 
