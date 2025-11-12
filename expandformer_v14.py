@@ -377,39 +377,38 @@ class MicroscopicGrowthTransformer(nn.Module):
 
     def check_and_grow(self):
         """
-        Growth strategy:
-        1. If struggling (high loss plateau) → grow domains
-        2. If domains maxed and still stuck → add transformer block
-        3. Aggressive: grow every 50 updates if stuck
+        Growth strategy: AGGRESSIVE (fixed)
+        Grow every 100 updates if loss is bad
         """
-        if self.total_updates - self.last_growth_check < 50:
+        if self.total_updates - self.last_growth_check < 50:  # Check every 50
             return False
 
         self.last_growth_check = self.total_updates
 
-        if len(self.recent_losses) < 30:
+        if len(self.recent_losses) < 20:  # Reduced from 30
             return False
 
         current_loss = np.mean(list(self.recent_losses)[-10:])
 
-        # Check if stuck (not improving)
-        if current_loss < self.best_loss:
+        # Update best loss
+        if current_loss < self.best_loss * 0.98:  # 2% improvement threshold
             self.best_loss = current_loss
             self.loss_plateau_counter = 0
             return False
         else:
             self.loss_plateau_counter += 1
 
-        # Only grow if really stuck (30 checks = 1500 updates)
-        if self.loss_plateau_counter < 30:
+        # AGGRESSIVE: Only need 10 stuck checks (was 30)
+        # = 500 updates instead of 1500!
+        if self.loss_plateau_counter < 10:  # Changed from 30
             return False
 
         grew = False
 
         # Strategy 1: Grow domains (specific tokens struggling)
-        struggling = self.embed.get_struggling_tokens(min_samples=10)
+        struggling = self.embed.get_struggling_tokens(min_samples=5)  # Reduced from 10
 
-        if len(struggling) >= 3:  # At least 3 struggling tokens
+        if len(struggling) >= 3:
             if self.embed.grow_domain(struggling, domain_dim=16):
                 self.domains_created += 1
                 new_params = sum(p.numel() for p in self.parameters())
@@ -417,11 +416,11 @@ class MicroscopicGrowthTransformer(nn.Module):
                 print(f"     Tokens: {len(struggling)} struggling tokens")
                 print(f"     Total params: {new_params:,}")
                 grew = True
-                self.loss_plateau_counter = 0  # Reset after growth
+                self.loss_plateau_counter = 0
 
         # Strategy 2: Add transformer block (need more capacity overall)
         if not grew and len(self.blocks) < self.max_blocks:
-            if self.loss_plateau_counter >= 50:  # Really stuck
+            if self.loss_plateau_counter >= 15:  # Reduced from 50
                 device = next(self.parameters()).device
                 new_block = UltraLightTransformer(
                     self.hidden_dim,
