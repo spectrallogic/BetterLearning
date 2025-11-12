@@ -1,8 +1,8 @@
 """
-ExpandFormer v13 Comprehensive Benchmark Suite
-===============================================
+ExpandFormer Comprehensive Benchmark Suite
+===========================================
 
-Tests the ORGANIC INTELLIGENCE capabilities of v13:
+Tests ORGANIC INTELLIGENCE capabilities:
 1. Domain-specific growth patterns
 2. Multi-speed gradient learning
 3. Subconscious planning effectiveness
@@ -11,9 +11,11 @@ Tests the ORGANIC INTELLIGENCE capabilities of v13:
 6. Adaptive learning behavior
 
 USAGE:
-python benchmark_v13.py --quick          # Fast test (~10 min)
-python benchmark_v13.py --full           # Complete test (~30 min)
-python benchmark_v13.py --visualize      # Generate visualizations only
+python benchmark_v13.py --quick                    # Fast test, all models
+python benchmark_v13.py --full                     # Complete test, all models
+python benchmark_v13.py --versions v13 v14         # Test specific versions
+python benchmark_v13.py --versions v14 --no-baselines  # Only v14, skip baselines
+python benchmark_v13.py --list                     # List available versions
 """
 
 import torch
@@ -29,6 +31,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from dataclasses import dataclass, field
 import sys
+import argparse
 from typing import List, Dict, Tuple
 
 try:
@@ -40,7 +43,6 @@ except ImportError:
 try:
     from sklearn.decomposition import PCA
     from sklearn.manifold import TSNE
-
     HAS_SKLEARN = True
 except ImportError:
     print("⚠️  sklearn not available - abstraction visualization disabled")
@@ -443,20 +445,35 @@ class GrowthAnalyzer:
             'active_params': sum(p.numel() for p in model.parameters() if p.requires_grad),
         }
 
-        # v13-specific metrics
-        if hasattr(model, 'embeddings'):
+        # Check for various growth attributes
+        # v13-style
+        if hasattr(model, 'embeddings') and hasattr(model.embeddings, 'domain_expansions'):
             snapshot['num_domains'] = len(model.embeddings.domain_expansions)
             snapshot['domain_sizes'] = [
                 sum(p.numel() for p in domain.parameters())
                 for domain in model.embeddings.domain_expansions
             ]
-
-            # Token distribution across domains
             domain_token_counts = [len(tokens) for tokens in model.embeddings.domain_token_sets]
             snapshot['tokens_per_domain'] = domain_token_counts
 
-        if hasattr(model, 'multi_speed'):
+        # v14-style
+        if hasattr(model, 'embed') and hasattr(model.embed, 'domains'):
+            snapshot['num_domains'] = len(model.embed.domains)
+            snapshot['domain_sizes'] = [
+                sum(p.numel() for p in domain.parameters())
+                for domain in model.embed.domains
+            ]
+            if hasattr(model.embed, 'domain_token_sets'):
+                domain_token_counts = [len(tokens) for tokens in model.embed.domain_token_sets]
+                snapshot['tokens_per_domain'] = domain_token_counts
+
+        # Multi-speed weights
+        if hasattr(model, 'multi_speed') and hasattr(model.multi_speed, 'speed_weights'):
             snapshot['speed_weights'] = model.multi_speed.speed_weights.detach().cpu().numpy().tolist()
+
+        # Transformer blocks growth
+        if hasattr(model, 'blocks'):
+            snapshot['num_blocks'] = len(model.blocks)
 
         self.snapshots.append(snapshot)
 
@@ -499,8 +516,7 @@ class GrowthAnalyzer:
             'initial_params': initial['total_params'],
             'final_params': final['total_params'],
             'param_growth': final['total_params'] - initial['total_params'],
-            'growth_rate': (final['total_params'] - initial['total_params']) / initial['total_params'] if initial[
-                                                                                                              'total_params'] > 0 else 0,
+            'growth_rate': (final['total_params'] - initial['total_params']) / initial['total_params'] if initial['total_params'] > 0 else 0,
         }
 
         if 'num_domains' in final:
@@ -508,6 +524,9 @@ class GrowthAnalyzer:
             summary['avg_domain_size'] = np.mean(final['domain_sizes']) if final['domain_sizes'] else 0
             summary['domain_size_std'] = np.std(final['domain_sizes']) if len(final['domain_sizes']) > 1 else 0
             summary['growth_pattern'] = self.analyze_growth_pattern()
+
+        if 'num_blocks' in final:
+            summary['blocks_added'] = final['num_blocks'] - initial.get('num_blocks', 0)
 
         return summary
 
@@ -519,7 +538,7 @@ class GrowthAnalyzer:
 class BenchmarkVisualizer:
     """Create comprehensive visualizations"""
 
-    def __init__(self, save_dir='benchmark_v13_results'):
+    def __init__(self, save_dir='benchmark_results'):
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(exist_ok=True)
 
@@ -553,7 +572,7 @@ class BenchmarkVisualizer:
         ax.legend()
         ax.grid(True, alpha=0.3)
 
-        # Plot 3: Domain creation events (v13 only)
+        # Plot 3: Domain creation events
         ax = axes[1, 0]
         for model_name, history in growth_histories.items():
             if history['growth_events']:
@@ -592,9 +611,9 @@ class BenchmarkVisualizer:
         print(f"📊 Saved: {self.save_dir / 'growth_comparison.png'}")
         plt.close()
 
-    def plot_domain_analysis(self, v13_metrics):
-        """Detailed analysis of v13 domain growth"""
-        if not v13_metrics.domain_sizes:
+    def plot_domain_analysis(self, metrics):
+        """Detailed analysis of domain growth"""
+        if not metrics.domain_sizes:
             print("⚠️  No domain data to visualize")
             return
 
@@ -602,8 +621,8 @@ class BenchmarkVisualizer:
 
         # Plot 1: Domain sizes
         ax = axes[0, 0]
-        domain_ids = list(range(len(v13_metrics.domain_sizes)))
-        ax.bar(domain_ids, v13_metrics.domain_sizes, color='skyblue', edgecolor='black')
+        domain_ids = list(range(len(metrics.domain_sizes)))
+        ax.bar(domain_ids, metrics.domain_sizes, color='skyblue', edgecolor='black')
         ax.set_xlabel('Domain ID')
         ax.set_ylabel('Size (parameters)')
         ax.set_title('Domain Sizes (Unevenness = Organic Growth)')
@@ -611,9 +630,9 @@ class BenchmarkVisualizer:
 
         # Plot 2: Tokens per domain
         ax = axes[0, 1]
-        if v13_metrics.tokens_per_domain:
-            domain_ids = list(v13_metrics.tokens_per_domain.keys())
-            token_counts = [len(tokens) for tokens in v13_metrics.tokens_per_domain.values()]
+        if metrics.tokens_per_domain:
+            domain_ids = list(metrics.tokens_per_domain.keys())
+            token_counts = [len(tokens) for tokens in metrics.tokens_per_domain.values()]
             ax.bar(domain_ids, token_counts, color='lightcoral', edgecolor='black')
             ax.set_xlabel('Domain ID')
             ax.set_ylabel('Number of Tokens')
@@ -622,8 +641,8 @@ class BenchmarkVisualizer:
 
         # Plot 3: Domain creation timeline
         ax = axes[1, 0]
-        if v13_metrics.domain_creation_times:
-            ax.plot(v13_metrics.domain_creation_times, marker='o', linewidth=2, markersize=8)
+        if metrics.domain_creation_times:
+            ax.plot(metrics.domain_creation_times, marker='o', linewidth=2, markersize=8)
             ax.set_xlabel('Domain ID')
             ax.set_ylabel('Creation Time (update)')
             ax.set_title('When Were Domains Created?')
@@ -631,9 +650,9 @@ class BenchmarkVisualizer:
 
         # Plot 4: Growth events detail
         ax = axes[1, 1]
-        if v13_metrics.growth_events:
-            updates = [e['update'] for e in v13_metrics.growth_events]
-            new_params = [e.get('new_params', 0) for e in v13_metrics.growth_events]
+        if metrics.growth_events:
+            updates = [e['update'] for e in metrics.growth_events]
+            new_params = [e.get('new_params', 0) for e in metrics.growth_events]
             ax.scatter(updates, new_params, s=100, alpha=0.7, color='green', edgecolors='black')
             ax.set_xlabel('Update')
             ax.set_ylabel('New Parameters Added')
@@ -645,9 +664,9 @@ class BenchmarkVisualizer:
         print(f"📊 Saved: {self.save_dir / 'domain_analysis.png'}")
         plt.close()
 
-    def plot_speed_analysis(self, v13_metrics):
+    def plot_speed_analysis(self, metrics):
         """Analyze multi-speed learning performance"""
-        if not v13_metrics.speed_weights:
+        if not metrics.speed_weights:
             print("⚠️  No speed data to visualize")
             return
 
@@ -655,7 +674,7 @@ class BenchmarkVisualizer:
 
         # Plot 1: Speed weight evolution
         ax = axes[0]
-        speed_weights = np.array(v13_metrics.speed_weights)
+        speed_weights = np.array(metrics.speed_weights)
         num_speeds = speed_weights.shape[1]
 
         for i in range(num_speeds):
@@ -668,8 +687,8 @@ class BenchmarkVisualizer:
 
         # Plot 2: Speed performances
         ax = axes[1]
-        if v13_metrics.speed_performances:
-            for speed_name, losses in v13_metrics.speed_performances.items():
+        if metrics.speed_performances:
+            for speed_name, losses in metrics.speed_performances.items():
                 ax.plot(losses, label=speed_name, linewidth=2, alpha=0.7)
             ax.set_xlabel('Update (x100)')
             ax.set_ylabel('Loss')
@@ -750,7 +769,7 @@ class BenchmarkVisualizer:
 
         with open(report_path, 'w', encoding='utf-8') as f:
             f.write("=" * 70 + "\n")
-            f.write("EXPANDFORMER v13 BENCHMARK REPORT\n")
+            f.write("EXPANDFORMER BENCHMARK REPORT\n")
             f.write("=" * 70 + "\n\n")
 
             # Overall Performance
@@ -763,7 +782,7 @@ class BenchmarkVisualizer:
                 f.write(f"  Total Parameters: {metrics.active_params:,}\n")
                 f.write(f"  Training Time: {metrics.training_time:.1f}s\n")
 
-                if metrics.version == "v13":
+                if metrics.version:
                     f.write(f"  Domains Created: {len(metrics.domain_sizes)}\n")
                     f.write(f"  Growth Events: {len(metrics.growth_events)}\n")
 
@@ -792,6 +811,8 @@ class BenchmarkVisualizer:
                     if 'domains_created' in summary:
                         f.write(f"  Domains Created: {summary['domains_created']}\n")
                         f.write(f"  Growth Pattern: {summary.get('growth_pattern', 'N/A')}\n")
+                    if 'blocks_added' in summary:
+                        f.write(f"  Blocks Added: {summary['blocks_added']}\n")
 
             # Winner Determination
             f.write("\n\nRESULTS\n")
@@ -821,11 +842,108 @@ class BenchmarkVisualizer:
 
 
 # ============================================================================
+# VERSION LOADER
+# ============================================================================
+
+class VersionLoader:
+    """Load different ExpandFormer versions dynamically"""
+
+    AVAILABLE_VERSIONS = {
+        'v13': {
+            'module': 'expandformer_v13',
+            'class': 'OrganicGrowthTransformer',
+            'description': 'Organic Growth with Subconscious Planning',
+            'config': {
+                'base_dim': 64,
+                'hidden_dim': 128,
+                'num_blocks': 2,
+                'num_heads': 2,
+                'max_domains': 20
+            }
+        },
+        'v14': {
+            'module': 'expandformer_v14',
+            'class': 'MicroscopicGrowthTransformer',
+            'description': 'Microscopic Start (Tiny → Grows)',
+            'config': {
+                'base_dim': 8,
+                'hidden_dim': 16,
+                'num_heads': 1,
+                'max_domains': 30,
+                'max_blocks': 10
+            }
+        },
+        'v12': {
+            'module': 'expandformer_v12',
+            'class': 'ExpandFormer',
+            'description': 'Forced Abstraction (16→32 dims)',
+            'config': {
+                'base_dim': 16,
+                'hidden_dim': 32,
+                'num_blocks': 2,
+                'num_heads': 1
+            }
+        }
+    }
+
+    @classmethod
+    def list_versions(cls):
+        """Print available versions"""
+        print("\n" + "=" * 70)
+        print("AVAILABLE EXPANDFORMER VERSIONS")
+        print("=" * 70)
+        for version, info in cls.AVAILABLE_VERSIONS.items():
+            print(f"\n{version}: {info['description']}")
+            print(f"  Module: {info['module']}.py")
+            print(f"  Class: {info['class']}")
+            print(f"  Config: {info['config']}")
+        print("\n" + "=" * 70 + "\n")
+
+    @classmethod
+    def load_version(cls, version, vocab_size, context_len):
+        """
+        Load a specific version
+        Returns: (model, version_name) or (None, None) if failed
+        """
+        if version not in cls.AVAILABLE_VERSIONS:
+            print(f"⚠️  Unknown version: {version}")
+            print(f"Available versions: {list(cls.AVAILABLE_VERSIONS.keys())}")
+            return None, None
+
+        info = cls.AVAILABLE_VERSIONS[version]
+
+        try:
+            # Try to import the module
+            sys.path.insert(0, str(Path.cwd()))
+            module = __import__(info['module'])
+            model_class = getattr(module, info['class'])
+
+            # Create model with config
+            config = info['config'].copy()
+            config['vocab_size'] = vocab_size
+            config['context_len'] = context_len
+
+            model = model_class(**config)
+
+            print(f"✓ Loaded {version}: {info['description']}")
+
+            return model, version
+
+        except ImportError as e:
+            print(f"\n⚠️  Could not import {version}: {e}")
+            print(f"Make sure {info['module']}.py exists in current directory")
+            return None, None
+        except Exception as e:
+            print(f"\n⚠️  Error creating {version}: {e}")
+            return None, None
+
+
+# ============================================================================
 # MAIN BENCHMARK RUNNER
 # ============================================================================
 
 class ComprehensiveBenchmark:
-    """Run complete v13 benchmark suite"""
+    """Run complete benchmark suite"""
 
     def __init__(self, training_texts, test_texts, device='cuda'):
         self.training_texts = training_texts
@@ -919,8 +1037,6 @@ class ComprehensiveBenchmark:
                     output = model(x)
                     if isinstance(output, tuple):
                         logits = output[0]
-                        if len(output) > 2:  # Has speed outputs
-                            fast_logits, slow_logits = output[1], output[2]
                     else:
                         logits = output
 
@@ -936,16 +1052,16 @@ class ComprehensiveBenchmark:
                     recent_losses.append(loss.item())
                     update_count += 1
 
-                    # Update v13-specific tracking
-                    if hasattr(model, 'embeddings'):
-                        model.embeddings.update_difficulties([y_token], [loss.item()])
+                    # Update tracking for growth models
+                    if hasattr(model, 'update_tracking'):
+                        model.update_tracking(loss.item(), y_token)
+                    elif hasattr(model, 'embeddings') and hasattr(model.embeddings, 'update_difficulty'):
+                        model.embeddings.update_difficulty(y_token, loss.item())
+                    elif hasattr(model, 'embed') and hasattr(model.embed, 'update_difficulty'):
+                        model.embed.update_difficulty(y_token, loss.item())
 
-                    if hasattr(model, 'total_updates'):
-                        model.total_updates += 1
-
-                    # Check for growth (v13)
+                    # Check for growth
                     if hasattr(model, 'check_and_grow') and update_count % 50 == 0:
-                        avg_loss = np.mean(list(recent_losses))
                         if model.check_and_grow():
                             new_params = sum(p.numel() for p in model.parameters())
                             metrics.growth_events.append({
@@ -966,16 +1082,29 @@ class ComprehensiveBenchmark:
                         # Take growth snapshot
                         growth_analyzer.take_snapshot(model, update_count)
 
-                        # Track v13-specific metrics
+                        # Track domain metrics (v13-style)
                         if hasattr(model, 'embeddings') and hasattr(model.embeddings, 'domain_expansions'):
                             metrics.domain_sizes = [
                                 sum(p.numel() for p in domain.parameters())
                                 for domain in model.embeddings.domain_expansions
                             ]
-                            metrics.tokens_per_domain = {
-                                i: list(tokens) for i, tokens in enumerate(model.embeddings.domain_token_sets)
-                            }
+                            if hasattr(model.embeddings, 'domain_token_sets'):
+                                metrics.tokens_per_domain = {
+                                    i: list(tokens) for i, tokens in enumerate(model.embeddings.domain_token_sets)
+                                }
 
+                        # Track domain metrics (v14-style)
+                        if hasattr(model, 'embed') and hasattr(model.embed, 'domains'):
+                            metrics.domain_sizes = [
+                                sum(p.numel() for p in domain.parameters())
+                                for domain in model.embed.domains
+                            ]
+                            if hasattr(model.embed, 'domain_token_sets'):
+                                metrics.tokens_per_domain = {
+                                    i: list(tokens) for i, tokens in enumerate(model.embed.domain_token_sets)
+                                }
+
+                        # Track multi-speed weights
                         if hasattr(model, 'multi_speed') and hasattr(model.multi_speed, 'speed_weights'):
                             weights = model.multi_speed.speed_weights.detach().cpu().numpy()
                             metrics.speed_weights.append(weights.tolist())
@@ -1058,13 +1187,18 @@ class ComprehensiveBenchmark:
 
         return task_metrics
 
-    def run_full_benchmark(self, mode='quick'):
+    def run_full_benchmark(self, mode='quick', versions=None, include_baselines=True):
         """Run complete benchmark suite"""
         print("=" * 70)
-        print("🔬 EXPANDFORMER v13 COMPREHENSIVE BENCHMARK")
+        print("🔬 EXPANDFORMER COMPREHENSIVE BENCHMARK")
         print("=" * 70)
         print(f"\nMode: {mode}")
-        print(f"Device: {self.device}\n")
+        print(f"Device: {self.device}")
+        if versions:
+            print(f"Testing versions: {', '.join(versions)}")
+        if not include_baselines:
+            print("Skipping baseline models")
+        print()
 
         # Set parameters based on mode
         if mode == 'quick':
@@ -1081,95 +1215,91 @@ class ComprehensiveBenchmark:
         task_results = {}
         growth_histories = {}
 
-        # 1. Baseline: Static Small
-        print("\n" + "=" * 70)
-        print("MODEL 1: Static Transformer (Small)")
-        print("=" * 70)
-        baseline_small = StaticTransformer(
-            vocab_size=vocab_size,
-            embed_dim=64,
-            hidden_dim=128,
-            num_layers=2,
-            num_heads=2
-        )
-        metrics_small, growth_small = self.train_and_evaluate(
-            baseline_small, "Static Small", "", num_updates, context_len
-        )
-        all_metrics["Static Small"] = metrics_small
-        all_growth_summaries["Static Small"] = growth_small
-        growth_histories["Static Small"] = {
-            'param_history': metrics_small.param_history,
-            'loss_history': metrics_small.loss_history,
-            'growth_events': metrics_small.growth_events
-        }
-
-        # Task evaluation
-        task_small = self.evaluate_tasks(baseline_small, "Static Small")
-        task_results["Static Small"] = task_small
-
-        # 2. Baseline: Static Large
-        print("\n" + "=" * 70)
-        print("MODEL 2: Static Transformer (Large)")
-        print("=" * 70)
-        baseline_large = StaticTransformer(
-            vocab_size=vocab_size,
-            embed_dim=96,
-            hidden_dim=192,
-            num_layers=3,
-            num_heads=4
-        )
-        metrics_large, growth_large = self.train_and_evaluate(
-            baseline_large, "Static Large", "", num_updates, context_len
-        )
-        all_metrics["Static Large"] = metrics_large
-        all_growth_summaries["Static Large"] = growth_large
-        growth_histories["Static Large"] = {
-            'param_history': metrics_large.param_history,
-            'loss_history': metrics_large.loss_history,
-            'growth_events': metrics_large.growth_events
-        }
-
-        # Task evaluation
-        task_large = self.evaluate_tasks(baseline_large, "Static Large")
-        task_results["Static Large"] = task_large
-
-        # 3. ExpandFormer v13
-        try:
-            sys.path.insert(0, str(Path.cwd()))
-            from expandformer_v13 import OrganicGrowthTransformer
-
+        # Run baselines if requested
+        if include_baselines:
+            # 1. Baseline: Static Small
             print("\n" + "=" * 70)
-            print("MODEL 3: ExpandFormer v13 (Organic Growth)")
+            print("MODEL: Static Transformer (Small)")
             print("=" * 70)
-
-            expandformer_v13 = OrganicGrowthTransformer(
+            baseline_small = StaticTransformer(
                 vocab_size=vocab_size,
-                base_dim=64,
+                embed_dim=64,
                 hidden_dim=128,
-                context_len=context_len,
-                num_blocks=2,
-                num_heads=2,
-                max_domains=20
+                num_layers=2,
+                num_heads=2
             )
-
-            metrics_v13, growth_v13 = self.train_and_evaluate(
-                expandformer_v13, "ExpandFormer v13", "v13", num_updates, context_len
+            metrics_small, growth_small = self.train_and_evaluate(
+                baseline_small, "Static Small", "", num_updates, context_len
             )
-            all_metrics["ExpandFormer v13"] = metrics_v13
-            all_growth_summaries["ExpandFormer v13"] = growth_v13
-            growth_histories["ExpandFormer v13"] = {
-                'param_history': metrics_v13.param_history,
-                'loss_history': metrics_v13.loss_history,
-                'growth_events': metrics_v13.growth_events
+            all_metrics["Static Small"] = metrics_small
+            all_growth_summaries["Static Small"] = growth_small
+            growth_histories["Static Small"] = {
+                'param_history': metrics_small.param_history,
+                'loss_history': metrics_small.loss_history,
+                'growth_events': metrics_small.growth_events
             }
 
             # Task evaluation
-            task_v13 = self.evaluate_tasks(expandformer_v13, "ExpandFormer v13")
-            task_results["ExpandFormer v13"] = task_v13
+            task_small = self.evaluate_tasks(baseline_small, "Static Small")
+            task_results["Static Small"] = task_small
 
-        except ImportError as e:
-            print(f"\n⚠️  Could not import v13: {e}")
-            print("Skipping v13 comparison\n")
+            # 2. Baseline: Static Large
+            print("\n" + "=" * 70)
+            print("MODEL: Static Transformer (Large)")
+            print("=" * 70)
+            baseline_large = StaticTransformer(
+                vocab_size=vocab_size,
+                embed_dim=96,
+                hidden_dim=192,
+                num_layers=3,
+                num_heads=4
+            )
+            metrics_large, growth_large = self.train_and_evaluate(
+                baseline_large, "Static Large", "", num_updates, context_len
+            )
+            all_metrics["Static Large"] = metrics_large
+            all_growth_summaries["Static Large"] = growth_large
+            growth_histories["Static Large"] = {
+                'param_history': metrics_large.param_history,
+                'loss_history': metrics_large.loss_history,
+                'growth_events': metrics_large.growth_events
+            }
+
+            # Task evaluation
+            task_large = self.evaluate_tasks(baseline_large, "Static Large")
+            task_results["Static Large"] = task_large
+
+        # Load and test requested versions
+        if not versions:
+            versions = ['v13', 'v14']  # Default versions
+
+        for version in versions:
+            print("\n" + "=" * 70)
+            print(f"MODEL: ExpandFormer {version}")
+            print("=" * 70)
+
+            model, ver_name = VersionLoader.load_version(version, vocab_size, context_len)
+
+            if model is None:
+                print(f"Skipping {version}\n")
+                continue
+
+            model_name = f"ExpandFormer {version}"
+
+            metrics, growth_summary = self.train_and_evaluate(
+                model, model_name, version, num_updates, context_len
+            )
+            all_metrics[model_name] = metrics
+            all_growth_summaries[model_name] = growth_summary
+            growth_histories[model_name] = {
+                'param_history': metrics.param_history,
+                'loss_history': metrics.loss_history,
+                'growth_events': metrics.growth_events
+            }
+
+            # Task evaluation
+            task_metrics = self.evaluate_tasks(model, model_name)
+            task_results[model_name] = task_metrics
 
         # Generate all visualizations
         print("\n" + "=" * 70)
@@ -1178,9 +1308,12 @@ class ComprehensiveBenchmark:
 
         self.visualizer.plot_growth_comparison(growth_histories)
 
-        if "ExpandFormer v13" in all_metrics:
-            self.visualizer.plot_domain_analysis(all_metrics["ExpandFormer v13"])
-            self.visualizer.plot_speed_analysis(all_metrics["ExpandFormer v13"])
+        # Plot domain analysis for any model that has domains
+        for model_name, metrics in all_metrics.items():
+            if metrics.domain_sizes:
+                self.visualizer.plot_domain_analysis(metrics)
+                self.visualizer.plot_speed_analysis(metrics)
+                break  # Only plot once
 
         self.visualizer.plot_task_comparison(task_results)
         self.visualizer.generate_summary_report(all_metrics, task_results, all_growth_summaries)
@@ -1230,16 +1363,35 @@ class ComprehensiveBenchmark:
 # ============================================================================
 
 def main():
-    mode = 'quick'
+    parser = argparse.ArgumentParser(
+        description='ExpandFormer Comprehensive Benchmark Suite',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__
+    )
 
-    if len(sys.argv) > 1:
-        if sys.argv[1] == '--full':
-            mode = 'full'
-        elif sys.argv[1] == '--quick':
-            mode = 'quick'
-        elif sys.argv[1] == '--help':
-            print(__doc__)
-            return
+    parser.add_argument('--quick', action='store_true',
+                       help='Quick test (500 updates, ~5 min)')
+    parser.add_argument('--full', action='store_true',
+                       help='Full test (2000 updates, ~20 min)')
+    parser.add_argument('--versions', nargs='+',
+                       help='Specific versions to test (e.g., v13 v14)')
+    parser.add_argument('--no-baselines', action='store_true',
+                       help='Skip baseline static models')
+    parser.add_argument('--list', action='store_true',
+                       help='List available versions and exit')
+
+    args = parser.parse_args()
+
+    # List versions if requested
+    if args.list:
+        VersionLoader.list_versions()
+        return
+
+    # Determine mode
+    if args.full:
+        mode = 'full'
+    else:
+        mode = 'quick'
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -1279,7 +1431,11 @@ def main():
 
     # Run benchmark
     benchmark = ComprehensiveBenchmark(train_texts, test_texts, device=device)
-    benchmark.run_full_benchmark(mode=mode)
+    benchmark.run_full_benchmark(
+        mode=mode,
+        versions=args.versions,
+        include_baselines=not args.no_baselines
+    )
 
 
 if __name__ == "__main__":
