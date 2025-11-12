@@ -1286,7 +1286,7 @@ class ComprehensiveBenchmark:
 
         # Load and test requested versions
         if not versions:
-            versions = ['v13', 'v14', 'v15']  # Default versions
+            versions = ['v13', 'v14', 'v15', 'v16']  # Default versions
 
         for version in versions:
             print("\n" + "=" * 70)

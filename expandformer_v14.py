@@ -155,6 +155,8 @@ class MicroscopicEmbedding(nn.Module):
         """
         x: [batch, seq] token ids
         Returns: [batch, seq, base_dim] embeddings (with domain corrections)
+
+        FIXED: No inplace operations to preserve gradient graph
         """
         # Base embeddings
         h = self.base_embed(x)  # [batch, seq, base_dim]
@@ -162,6 +164,9 @@ class MicroscopicEmbedding(nn.Module):
         # Apply domain corrections (residuals)
         if len(self.domains) > 0:
             batch, seq = x.shape
+
+            # Create a tensor to accumulate corrections
+            corrections = torch.zeros_like(h)
 
             for b in range(batch):
                 for s in range(seq):
@@ -171,8 +176,14 @@ class MicroscopicEmbedding(nn.Module):
                         # Apply all domains this token belongs to
                         for domain_idx in self.token_to_domains[tid]:
                             if domain_idx < len(self.domains):
-                                correction = self.domains[domain_idx](h[b:b + 1, s:s + 1, :])
-                                h[b, s, :] = h[b, s, :] + correction.squeeze() * 0.1
+                                # Get correction from domain
+                                base_vec = h[b:b + 1, s:s + 1, :]
+                                correction = self.domains[domain_idx](base_vec)
+                                # Accumulate correction (not inplace!)
+                                corrections[b, s, :] = corrections[b, s, :] + correction.squeeze() * 0.1
+
+            # Apply all corrections at once (creates new tensor)
+            h = h + corrections
 
         return h
 
@@ -224,42 +235,17 @@ class UltraLightTransformer(nn.Module):
         return x
 
 
-class FastAssociations(nn.Module):
-    """
-    Ultra-fast pattern matching
-    Just lookup table with tiny projection
-    """
-
-    def __init__(self, vocab_size, fast_dim=4):
-        super().__init__()
-
-        self.fast_lookup = nn.Embedding(vocab_size, fast_dim)
-        self.to_logits = nn.Linear(fast_dim, vocab_size)
-
-        nn.init.normal_(self.fast_lookup.weight, std=0.02)
-        nn.init.xavier_uniform_(self.to_logits.weight)
-
-    def forward(self, x):
-        """x: [batch, seq] → [batch, vocab_size]"""
-        fast_embed = self.fast_lookup(x[:, -1])  # Just last token
-        return self.to_logits(fast_embed)
-
-
 # ============================================================================
 # MICROSCOPIC GROWTH TRANSFORMER
 # ============================================================================
 
 class MicroscopicGrowthTransformer(nn.Module):
     """
-    v14: Start with < 20K params, grow to whatever is needed
-
-    Initial: ~15K params (microscopic!)
-    Final: 200K-2M params (grown organically)
+    The complete microscopic model that grows organically
     """
 
     def __init__(self, vocab_size, base_dim=4, hidden_dim=8,
-                 context_len=128, num_heads=1, dropout=0.1,
-                 max_domains=30, max_blocks=10):
+                 context_len=128, num_heads=1, max_domains=30, max_blocks=10):
         super().__init__()
 
         self.vocab_size = vocab_size
@@ -272,27 +258,24 @@ class MicroscopicGrowthTransformer(nn.Module):
         print("=" * 70)
         print("🔬 MICROSCOPIC GROWTH TRANSFORMER v14")
         print("=" * 70)
-        print(f"Starting configuration:")
+        print("Starting configuration:")
         print(f"  Base: {base_dim} dims")
         print(f"  Hidden: {hidden_dim} dims")
         print(f"  Blocks: 1 (will grow to {max_blocks})")
         print(f"  Domains: 0 (will grow to {max_domains})")
 
-        # Fast associations (immediate patterns)
-        self.fast = FastAssociations(vocab_size, fast_dim=4)
-
-        # Microscopic embeddings (grows domains)
+        # Embeddings (microscopic)
         self.embed = MicroscopicEmbedding(vocab_size, base_dim, max_domains)
 
-        # Positional encoding
-        self.register_buffer('pos_enc', self._create_pos_encoding(context_len, base_dim))
-
-        # Project to hidden dim
+        # Projection (embed -> hidden)
         self.input_proj = nn.Linear(base_dim, hidden_dim)
 
-        # Start with just ONE block (grows more)
+        # Position encoding
+        self.register_buffer('pos_encoding', self._create_pos_encoding(context_len, hidden_dim))
+
+        # Start with ONE tiny block
         self.blocks = nn.ModuleList([
-            UltraLightTransformer(hidden_dim, num_heads, dropout)
+            UltraLightTransformer(hidden_dim, num_heads=num_heads)
         ])
 
         # Output
@@ -300,150 +283,118 @@ class MicroscopicGrowthTransformer(nn.Module):
         self.output = nn.Linear(hidden_dim, vocab_size)
 
         # Growth tracking
-        self.total_updates = 0
-        self.last_growth_check = 0
         self.domains_created = 0
         self.blocks_added = 0
+        self.total_updates = 0
+        self.last_growth_check = 0
 
-        # Loss tracking for growth decisions
-        self.recent_losses = deque(maxlen=50)
-        self.loss_plateau_counter = 0
-        self.best_loss = float('inf')
+        initial_params = sum(p.numel() for p in self.parameters())
+        print(f"\n✓ Initial parameters: {initial_params:,}")
+        if initial_params > 20000:
+            print(f"   Warning: {initial_params} > 20,000!")
 
-        total_params = sum(p.numel() for p in self.parameters())
-        print(f"\n✓ Initial parameters: {total_params:,}")
-        print(f"   Target: < 20,000 ✓" if total_params < 20000 else f"   Warning: {total_params} > 20,000!")
-        print(f"\n💡 Model will grow as it learns\n")
-        print("=" * 70 + "\n")
+        print("\n💡 Model will grow as it learns")
+        print("=" * 70)
+        print()
 
-        self._init_weights()
-
-    def _init_weights(self):
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                nn.init.xavier_uniform_(module.weight, gain=0.5)
-                if module.bias is not None:
-                    nn.init.zeros_(module.bias)
-
-    def _create_pos_encoding(self, max_len, d_model):
-        pos_enc = torch.zeros(max_len, d_model)
+    def _create_pos_encoding(self, max_len, dim):
+        """Sinusoidal positional encoding"""
+        pe = torch.zeros(max_len, dim)
         position = torch.arange(0, max_len).unsqueeze(1).float()
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() *
-                             -(math.log(10000.0) / d_model))
-        pos_enc[:, 0::2] = torch.sin(position * div_term)
-        if d_model > 1:
-            pos_enc[:, 1::2] = torch.cos(position * div_term)
-        return pos_enc
+        div_term = torch.exp(torch.arange(0, dim, 2).float() * -(math.log(10000.0) / dim))
 
-    def forward(self, x, return_fast=False):
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+
+        return pe
+
+    def forward(self, x):
         """
-        x: [batch, seq]
-        Returns: logits [batch, vocab_size] or [batch, seq, vocab_size]
+        x: [batch, seq] token ids
+        Returns: [batch, vocab_size] logits
         """
         batch, seq = x.shape
 
-        # Fast path (immediate associations)
-        fast_logits = self.fast(x)
-
-        # Slow path (understanding)
+        # Embed
         h = self.embed(x)  # [batch, seq, base_dim]
 
-        # Add positional encoding
-        if seq <= self.context_len:
-            h = h + self.pos_enc[:seq].unsqueeze(0)
-
-        # Project to hidden dim
+        # Project to hidden
         h = self.input_proj(h)  # [batch, seq, hidden_dim]
 
-        # Transform through blocks
-        mask = None  # Block will create it internally
+        # Add position
+        if seq <= self.context_len:
+            h = h + self.pos_encoding[:seq].unsqueeze(0)
+
+        # Transform
         for block in self.blocks:
-            h = block(h, mask=mask)  # ✓ Pass mask parameter
+            h = block(h)
 
         # Output
         h = self.output_norm(h)
-        slow_logits = self.output(h)  # [batch, seq, vocab_size]
+        logits = self.output(h[:, -1, :])  # Only last position
 
-        # Take last position
-        slow_logits = slow_logits[:, -1, :]  # [batch, vocab_size]
+        return logits
 
-        # Mix fast and slow (more weight on slow as it learns)
-        fast_weight = 0.3
-        combined = fast_weight * fast_logits + (1 - fast_weight) * slow_logits
-
-        if return_fast:
-            return combined, fast_logits, slow_logits
-        return combined
-
-    def check_and_grow(self):
-        """
-        Growth strategy: AGGRESSIVE (fixed)
-        Grow every 100 updates if loss is bad
-        """
-        if self.total_updates - self.last_growth_check < 50:  # Check every 50
-            return False
+    def should_grow_domain(self):
+        """Check if we need a new domain"""
+        if self.total_updates - self.last_growth_check < 200:
+            return False, []
 
         self.last_growth_check = self.total_updates
 
-        if len(self.recent_losses) < 20:  # Reduced from 30
+        # Get struggling tokens
+        struggling = self.embed.get_struggling_tokens(min_samples=20)
+
+        if len(struggling) >= 5:  # Need at least 5 tokens
+            return True, struggling[:15]  # Take top 15
+
+        return False, []
+
+    def grow_domain(self, token_group):
+        """Create new domain for struggling tokens"""
+        # Grow larger domains as we learn more
+        base_size = 16
+        domain_size = base_size + (self.domains_created * 4)  # 16, 20, 24, 28...
+        domain_size = min(domain_size, 64)  # Cap at 64
+
+        success = self.embed.grow_domain(token_group, domain_size)
+
+        if success:
+            self.domains_created += 1
+            print(f"\n  🌿 Domain {self.domains_created} created!")
+            print(f"     Tokens: {len(token_group)} struggling tokens")
+            total_params = sum(p.numel() for p in self.parameters())
+            print(f"     Total params: {total_params:,}")
+
+        return success
+
+    def should_grow_block(self):
+        """Check if we need another transformer block"""
+        if len(self.blocks) >= self.max_blocks:
             return False
 
-        current_loss = np.mean(list(self.recent_losses)[-10:])
+        # Add block every N domains
+        blocks_expected = 1 + (self.domains_created // 3)
+        return len(self.blocks) < blocks_expected
 
-        # Update best loss
-        if current_loss < self.best_loss * 0.98:  # 2% improvement threshold
-            self.best_loss = current_loss
-            self.loss_plateau_counter = 0
-            return False
-        else:
-            self.loss_plateau_counter += 1
+    def grow_block(self):
+        """Add another transformer block"""
+        device = next(self.parameters()).device
 
-        # AGGRESSIVE: Only need 10 stuck checks (was 30)
-        # = 500 updates instead of 1500!
-        if self.loss_plateau_counter < 10:  # Changed from 30
-            return False
+        new_block = UltraLightTransformer(
+            self.hidden_dim,
+            num_heads=1
+        ).to(device)
 
-        grew = False
+        self.blocks.append(new_block)
+        self.blocks_added += 1
 
-        # Strategy 1: Grow domains (specific tokens struggling)
-        struggling = self.embed.get_struggling_tokens(min_samples=5)  # Reduced from 10
+        print(f"\n  🌿 Block {len(self.blocks)} added!")
+        total_params = sum(p.numel() for p in self.parameters())
+        print(f"     Total blocks: {len(self.blocks)}")
+        print(f"     Total params: {total_params:,}")
 
-        if len(struggling) >= 3:
-            if self.embed.grow_domain(struggling, domain_dim=16):
-                self.domains_created += 1
-                new_params = sum(p.numel() for p in self.parameters())
-                print(f"\n  🌿 Domain {self.domains_created} created!")
-                print(f"     Tokens: {len(struggling)} struggling tokens")
-                print(f"     Total params: {new_params:,}")
-                grew = True
-                self.loss_plateau_counter = 0
-
-        # Strategy 2: Add transformer block (need more capacity overall)
-        if not grew and len(self.blocks) < self.max_blocks:
-            if self.loss_plateau_counter >= 15:  # Reduced from 50
-                device = next(self.parameters()).device
-                new_block = UltraLightTransformer(
-                    self.hidden_dim,
-                    num_heads=1,
-                    dropout=0.1
-                ).to(device)
-
-                self.blocks.append(new_block)
-                self.blocks_added += 1
-                new_params = sum(p.numel() for p in self.parameters())
-                print(f"\n  🧠 Transformer block {len(self.blocks)} added!")
-                print(f"     Total blocks: {len(self.blocks)}")
-                print(f"     Total params: {new_params:,}")
-                grew = True
-                self.loss_plateau_counter = 0
-
-        return grew
-
-    def update_tracking(self, loss_value, token_id):
-        """Update loss tracking for growth decisions"""
-        self.recent_losses.append(loss_value)
-        self.embed.update_difficulty(token_id, loss_value)
-        self.total_updates += 1
+        return True
 
 
 # ============================================================================
@@ -452,8 +403,7 @@ class MicroscopicGrowthTransformer(nn.Module):
 
 class MicroscopicLearner:
     """
-    Trains the microscopic model
-    Watches it grow organically
+    Training system for microscopic model
     """
 
     def __init__(self, model, tokenizer, lr=0.001, device='cuda'):
@@ -461,67 +411,89 @@ class MicroscopicLearner:
         self.tokenizer = tokenizer
         self.device = device
 
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=lr,
-            weight_decay=0.01
-        )
+        self.optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
 
         self.growth_history = []
 
-    def train(self, texts, epochs=5, context_len=128, sample_every=100):
-        """
-        Train and watch it grow
-        """
-        print("🌱 TRAINING: From Microscopic Seed to Functional Intelligence\n")
-
-        test_prompts = self._sample_prompts(texts, n=3)
+    def train(self, texts, epochs=3, sample_every=100):
+        print("=" * 70)
+        print("🚀 STARTING MICROSCOPIC TRAINING")
+        print("=" * 70)
+        print(f"Epochs: {epochs}")
+        print(f"Texts: {len(texts)}")
+        print(f"Device: {self.device}")
+        print("=" * 70)
+        print()
 
         total_updates = 0
+        last_sample = 0
+
+        # Initial sample prompts
+        test_prompts = self._sample_prompts(texts, n=3)
 
         for epoch in range(epochs):
-            print(f"{'=' * 70}")
-            print(f"Epoch {epoch + 1}/{epochs}")
+            print(f"\n{'=' * 70}")
+            print(f"EPOCH {epoch + 1}/{epochs}")
             print(f"{'=' * 70}\n")
 
             epoch_losses = []
-            last_sample = 0
 
             for text_idx, text in enumerate(texts):
+                # Tokenize
                 tokens = self.tokenizer.encode(text)
                 if len(tokens) < 2:
                     continue
 
+                # Create sequences
                 for i in range(1, len(tokens)):
-                    # Prepare context
-                    context_start = max(0, i - context_len)
-                    context = tokens[context_start:i]
+                    context = tokens[max(0, i - self.model.context_len):i]
+                    target = tokens[i]
 
-                    if len(context) < context_len:
-                        context = [0] * (context_len - len(context)) + context
+                    # Pad if needed
+                    if len(context) < self.model.context_len:
+                        context = [0] * (self.model.context_len - len(context)) + context
 
-                    x = torch.tensor([context[-context_len:]], dtype=torch.long, device=self.device)
-                    y_token = tokens[i]
-                    y = torch.tensor([y_token], dtype=torch.long, device=self.device)
+                    x = torch.tensor([context], dtype=torch.long, device=self.device)
+                    y = torch.tensor([target], dtype=torch.long, device=self.device)
 
                     # Forward
-                    self.optimizer.zero_grad()
+                    self.model.train()
                     logits = self.model(x)
-
                     loss = F.cross_entropy(logits, y)
-                    loss.backward()
 
+                    # Track difficulty
+                    with torch.no_grad():
+                        self.model.embed.update_difficulty(target, loss.item())
+
+                    # Backward
+                    self.optimizer.zero_grad()
+                    loss.backward()
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                     self.optimizer.step()
 
-                    # Track
                     epoch_losses.append(loss.item())
-                    self.model.update_tracking(loss.item(), y_token)
                     total_updates += 1
+                    self.model.total_updates = total_updates
 
                     # Check for growth
                     if total_updates % 50 == 0:
-                        if self.model.check_and_grow():
+                        # Domain growth
+                        should_grow, struggling_tokens = self.model.should_grow_domain()
+                        if should_grow:
+                            self.model.grow_domain(struggling_tokens)
+
+                            # Record growth event
+                            self.growth_history.append({
+                                'update': total_updates,
+                                'params': sum(p.numel() for p in self.model.parameters()),
+                                'domains': self.model.domains_created,
+                                'blocks': len(self.model.blocks),
+                            })
+
+                        # Block growth
+                        if self.model.should_grow_block():
+                            self.model.grow_block()
+
                             # Record growth event
                             self.growth_history.append({
                                 'update': total_updates,
